@@ -64,6 +64,9 @@ export const START_POLL_MS = 1_000;
 /** How much of a CLI's stderr is quoted back when its reply is unreadable. */
 export const STDERR_TAIL_CHARS = 200;
 
+/** The CLI's own spelling of the axis, kept at the one place that talks to `split`. */
+const splitFlag = (): "--horizontal" | "--vertical" => (splitAxis() === "side-by-side" ? "--horizontal" : "--vertical");
+
 /**
  * The width a pane needs before splitting it sideways leaves two halves worth reading: 80
  * columns each, the floor every terminal UI is designed against.
@@ -342,18 +345,20 @@ export const piBinary = (): string => process.env.PI_SUBAGENT_PI_BIN?.trim() || 
  * is worse than 20 rows of one. `PI_SUBAGENT_SPLIT=horizontal|vertical` pins it when guessing
  * about a terminal is not wanted.
  */
-export function splitAxisFor(columns: number | undefined): "--horizontal" | "--vertical" {
-	// Unknown geometry splits height, which is what this extension did before it chose at all.
-	if (columns === undefined) return "--vertical";
-	return columns >= SIDE_BY_SIDE_MIN_COLUMNS ? "--horizontal" : "--vertical";
+export type SplitAxis = "side-by-side" | "stacked";
+
+export function splitAxisFor(columns: number | undefined): SplitAxis {
+	// Unknown geometry stacks, which is what this extension did before it chose at all.
+	if (columns === undefined) return "stacked";
+	return columns >= SIDE_BY_SIDE_MIN_COLUMNS ? "side-by-side" : "stacked";
 }
 
-/** The split flag for this process, honouring the override. */
-export function splitAxis(): "--horizontal" | "--vertical" {
+/** This process's axis, honouring the override. The width is a parameter so it can be proved. */
+export function splitAxis(columns: number | undefined = process.stdout.columns): SplitAxis {
 	const forced = process.env.PI_SUBAGENT_SPLIT?.trim();
-	if (forced === "horizontal") return "--horizontal";
-	if (forced === "vertical") return "--vertical";
-	return splitAxisFor(process.stdout.columns);
+	if (forced === "horizontal") return "side-by-side";
+	if (forced === "vertical") return "stacked";
+	return splitAxisFor(columns);
 }
 
 /**
@@ -378,7 +383,7 @@ export async function startChild(
 	sessionName: string,
 	argv: string[],
 ): Promise<Launch> {
-	const split = await callTty7(pi, ["split", splitAxis(), "--json"], PANE_PROBE_TIMEOUT_MS);
+	const split = await callTty7(pi, ["split", splitFlag(), "--json"], PANE_PROBE_TIMEOUT_MS);
 	const pane = numberField(split.result, "pane");
 	if (pane === undefined) throw new Tty7Error("tty7 split: reply carried no pane", undefined);
 	const target = String(pane);

@@ -20,8 +20,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
-import { registerHooks } from "node:module";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -31,50 +30,15 @@ const EXTENSION = join(HERE, "extensions", "tty7-subagent.ts");
 // time — must land in this run's own dir, or a test run would sweep the shared one.
 process.env.TMPDIR = mkdtempSync(join(tmpdir(), "tty7-verify-"));
 
-// ── 0. Locate the Pi SDK, so its bare imports resolve outside the Pi runtime ──
-const sdkRoot = (() => {
-	if (process.env.PI_SDK_DIR) return process.env.PI_SDK_DIR;
-	const bin = execFileSync("readlink", ["-f", execFileSync("which", ["pi"], { encoding: "utf-8" }).trim()], {
-		encoding: "utf-8",
-	}).trim();
-	let version;
-	for (let dir = dirname(bin); dir !== "/"; dir = dirname(dir)) {
-		const manifest = join(dir, "package.json");
-		if (!existsSync(manifest)) continue;
-		const parsed = JSON.parse(readFileSync(manifest, "utf-8"));
-		if (parsed.name !== "@earendil-works/pi-coding-agent") continue;
-		version = parsed.version;
-		// A native Pi carries the SDK inside the binary: it keeps the manifest and ships no
-		// `dist/` and no `node_modules`, so there is nothing here to resolve against.
-		if (existsSync(join(dir, "node_modules")) && existsSync(join(dir, "dist"))) return dir;
-		break;
-	}
-	// The published packages are the same version as the binary, so the harness installs them
-	// once into a cache. This is the only step that wants the network, and only on a first run.
-	const cache = join(homedir(), ".cache", "pi-tty7-subagent", "sdk");
-	const installed = join(cache, "node_modules", "@earendil-works", "pi-coding-agent", "package.json");
-	if (!existsSync(installed)) {
-		const wanted = version === undefined ? "latest" : version;
-		execFileSync("npm", ["install", "--silent", "--no-audit", "--no-fund", "--prefix", cache, `@earendil-works/pi-coding-agent@${wanted}`, `@earendil-works/pi-tui@${wanted}`], { stdio: "inherit" });
-	}
-	if (!existsSync(installed)) throw new Error(`cannot locate @earendil-works/pi-coding-agent; set PI_SDK_DIR (tried ${installed})`);
-	return cache;
-})();
-
-registerHooks({
-	resolve(specifier, context, next) {
-		// Anchor the SDK's bare specifiers at its own node_modules, the way the Pi
-		// runtime resolves them for an extension.
-		if (specifier.startsWith("@earendil-works/") || specifier === "typebox") {
-			return next(specifier, {
-				...context,
-				parentURL: pathToFileURL(join(sdkRoot, "node_modules", "anchor.mjs")).href,
-			});
-		}
-		return next(specifier, context);
-	},
-});
-
+// ── 0. The Pi SDK is a devDependency ───────────────────────────────────────
+// The extension imports `@earendil-works/pi-coding-agent` and `@earendil-works/pi-tui`, and
+// those are declared here, so Node resolves them from this checkout's node_modules the way it
+// would for any other file in the repo. A Pi installed from a native binary carries its own
+// copy inside the ELF and ships none on disk, which is why the version under test is the one
+// `package.json` pins rather than the one `pi --version` reports.
+if (!existsSync(join(HERE, "node_modules", "@earendil-works", "pi-coding-agent", "package.json"))) {
+	throw new Error("run `npm install` first: verify.mjs loads the extension against this repo's own devDependencies");
+}
 // ── 1. A throwaway HOME, so the extension's own paths stay out of the way ────
 // A finished state is watched for a window before it counts as the end of a delegation, because
 // the child may yet retry an errored turn or continue a finished one. That window is measured in
@@ -87,6 +51,9 @@ process.env.PI_SUBAGENT_WAIT_SECONDS = "3";
 // The handover window is fifteen seconds in production; here it must not be.
 process.env.PI_SUBAGENT_CONFIRM_SECONDS = "3";
 process.env.PI_SUBAGENT_READY_SECONDS = "5";
+// The axis is picked from `process.stdout.columns`, so the checks pin it: a suite whose result
+// depends on the width of whoever's terminal runs it is a coin flip, not a net.
+process.env.PI_SUBAGENT_SPLIT = "vertical";
 const HOME = join(tmpdir(), `tty7-verify-${process.pid}`);
 const AGENT_DIR = join(HOME, ".pi", "agent");
 const SESSION_DIR = join(AGENT_DIR, "subagent-sessions");
@@ -526,16 +493,20 @@ check("bare agent gets no --tools", !bare.args.includes("--tools"));
 check("bare agent always gets --no-skills", bare.args.includes("--no-skills"));
 // tty7 has no automatic axis: `split` falls back to vertical whenever --horizontal is absent,
 // so the choice is ours — along the longer side, because rows are what a TUI runs out of.
+const MIN_COLUMNS = extension.SIDE_BY_SIDE_MIN_COLUMNS;
 check(
-	"a pane splits sideways only when both halves stay wide enough",
-	extension.splitAxisFor(205) === "--horizontal" &&
-		extension.splitAxisFor(160) === "--horizontal" &&
-		extension.splitAxisFor(120) === "--vertical",
-	`${extension.splitAxisFor(205)} / ${extension.splitAxisFor(160)} / ${extension.splitAxisFor(120)}`,
+	"at the threshold the child goes beside this pane, keeping the height",
+	extension.splitAxisFor(MIN_COLUMNS) === "side-by-side",
+	`${MIN_COLUMNS} columns -> ${extension.splitAxisFor(MIN_COLUMNS)}`,
 );
 check(
-	"an unknown pane size splits height, as it did before it chose at all",
-	extension.splitAxisFor(undefined) === "--vertical",
+	"one column narrower and it stacks instead: 60 columns of agent is worse than 20 rows of one",
+	extension.splitAxisFor(MIN_COLUMNS - 1) === "stacked",
+	`${MIN_COLUMNS - 1} columns -> ${extension.splitAxisFor(MIN_COLUMNS - 1)}`,
+);
+check(
+	"an unknown pane size stacks, as it did before it chose at all",
+	extension.splitAxisFor(undefined) === "stacked",
 );
 check(
 	"replace mode passes the empty append pair",
@@ -600,12 +571,17 @@ check(
 	callLog.join(" | "),
 );
 
-// The override is what a terminal whose size we cannot trust is told by hand.
+// The override is what a terminal whose size we cannot trust is told by hand. It is proved
+// against the value this run is *not* pinned to, or the check could not tell the knob from luck.
 process.env.PI_SUBAGENT_SPLIT = "horizontal";
-const forcedMark = readFileSync(STUB_LOG, "utf-8").length;
-await tools.delegate.execute("verify-forced-split", { agent: "fixture-bare", task: "STUBBORN_TASK" }, undefined, undefined, ctx);
-delete process.env.PI_SUBAGENT_SPLIT;
-const forcedLog = readFileSync(STUB_LOG, "utf-8").slice(forcedMark).trim().split("\n");
+let forcedLog = [];
+try {
+	const forcedMark = readFileSync(STUB_LOG, "utf-8").length;
+	await tools.delegate.execute("verify-forced-split", { agent: "fixture-bare", task: "STUBBORN_TASK" }, undefined, undefined, ctx);
+	forcedLog = readFileSync(STUB_LOG, "utf-8").slice(forcedMark).trim().split("\n");
+} finally {
+	process.env.PI_SUBAGENT_SPLIT = "vertical";
+}
 check(
 	"PI_SUBAGENT_SPLIT pins the axis the CLI is given",
 	forcedLog[0] === "split --horizontal --json",
