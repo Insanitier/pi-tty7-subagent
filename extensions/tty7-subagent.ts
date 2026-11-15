@@ -30,6 +30,7 @@ import { sweepExpiredPrompts, sweepOrphanSessions } from "./tty7-subagent/sweeps
 // names stable, because a check that reaches into a moved file is a check that has to
 // change whenever the file moves.
 export { discoverAgents, prepareLaunch, writePromptFile } from "./tty7-subagent/agents.ts";
+export { splitAxisFor } from "./tty7-subagent/tty7.ts";
 
 // ── Extension entry ────────────────────────────────────────────────────────
 

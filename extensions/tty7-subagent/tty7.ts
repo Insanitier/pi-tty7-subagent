@@ -65,6 +65,12 @@ export const START_POLL_MS = 1_000;
 export const STDERR_TAIL_CHARS = 200;
 
 /**
+ * The width a pane needs before splitting it sideways leaves two halves worth reading: 80
+ * columns each, the floor every terminal UI is designed against.
+ */
+export const SIDE_BY_SIDE_MIN_COLUMNS = 160;
+
+/**
  * How much of a sitting command line is enough to recognize it: a wrapped row can lose the
  * lead, but a distinctive tail survives.
  */
@@ -327,6 +333,30 @@ export function commandLine(argv: string[]): string {
 export const piBinary = (): string => process.env.PI_SUBAGENT_PI_BIN?.trim() || "pi";
 
 /**
+ * Which side a child's pane takes half of.
+ *
+ * tty7 has no automatic choice — `split` falls back to `--vertical` whenever `--horizontal`
+ * is absent — so the choice is made here. Side by side keeps the height, which is what a rich
+ * TUI runs out of first; it halves the width, which is why it is only taken when both halves
+ * still clear `SIDE_BY_SIDE_MIN_COLUMNS`. A narrower pane stacks instead: 60 columns of agent
+ * is worse than 20 rows of one. `PI_SUBAGENT_SPLIT=horizontal|vertical` pins it when guessing
+ * about a terminal is not wanted.
+ */
+export function splitAxisFor(columns: number | undefined): "--horizontal" | "--vertical" {
+	// Unknown geometry splits height, which is what this extension did before it chose at all.
+	if (columns === undefined) return "--vertical";
+	return columns >= SIDE_BY_SIDE_MIN_COLUMNS ? "--horizontal" : "--vertical";
+}
+
+/** The split flag for this process, honouring the override. */
+export function splitAxis(): "--horizontal" | "--vertical" {
+	const forced = process.env.PI_SUBAGENT_SPLIT?.trim();
+	if (forced === "horizontal") return "--horizontal";
+	if (forced === "vertical") return "--vertical";
+	return splitAxisFor(process.stdout.columns);
+}
+
+/**
  * When a line still sitting on the shell's prompt counts as a swallowed Enter: a third of the
  * readiness budget at most, because a grace longer than the budget can never fire — the launch
  * would give up first, which is the failure this rescue exists to avoid.
@@ -348,7 +378,7 @@ export async function startChild(
 	sessionName: string,
 	argv: string[],
 ): Promise<Launch> {
-	const split = await callTty7(pi, ["split", "--vertical", "--json"], PANE_PROBE_TIMEOUT_MS);
+	const split = await callTty7(pi, ["split", splitAxis(), "--json"], PANE_PROBE_TIMEOUT_MS);
 	const pane = numberField(split.result, "pane");
 	if (pane === undefined) throw new Tty7Error("tty7 split: reply carried no pane", undefined);
 	const target = String(pane);

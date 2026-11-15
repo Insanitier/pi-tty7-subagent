@@ -21,7 +21,7 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { registerHooks } from "node:module";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -37,12 +37,28 @@ const sdkRoot = (() => {
 	const bin = execFileSync("readlink", ["-f", execFileSync("which", ["pi"], { encoding: "utf-8" }).trim()], {
 		encoding: "utf-8",
 	}).trim();
+	let version;
 	for (let dir = dirname(bin); dir !== "/"; dir = dirname(dir)) {
 		const manifest = join(dir, "package.json");
 		if (!existsSync(manifest)) continue;
-		if (JSON.parse(readFileSync(manifest, "utf-8")).name === "@earendil-works/pi-coding-agent") return dir;
+		const parsed = JSON.parse(readFileSync(manifest, "utf-8"));
+		if (parsed.name !== "@earendil-works/pi-coding-agent") continue;
+		version = parsed.version;
+		// A native Pi carries the SDK inside the binary: it keeps the manifest and ships no
+		// `dist/` and no `node_modules`, so there is nothing here to resolve against.
+		if (existsSync(join(dir, "node_modules")) && existsSync(join(dir, "dist"))) return dir;
+		break;
 	}
-	throw new Error("cannot locate @earendil-works/pi-coding-agent; set PI_SDK_DIR");
+	// The published packages are the same version as the binary, so the harness installs them
+	// once into a cache. This is the only step that wants the network, and only on a first run.
+	const cache = join(homedir(), ".cache", "pi-tty7-subagent", "sdk");
+	const installed = join(cache, "node_modules", "@earendil-works", "pi-coding-agent", "package.json");
+	if (!existsSync(installed)) {
+		const wanted = version === undefined ? "latest" : version;
+		execFileSync("npm", ["install", "--silent", "--no-audit", "--no-fund", "--prefix", cache, `@earendil-works/pi-coding-agent@${wanted}`, `@earendil-works/pi-tui@${wanted}`], { stdio: "inherit" });
+	}
+	if (!existsSync(installed)) throw new Error(`cannot locate @earendil-works/pi-coding-agent; set PI_SDK_DIR (tried ${installed})`);
+	return cache;
 })();
 
 registerHooks({
@@ -508,6 +524,19 @@ const bare = extension.prepareLaunch(
 );
 check("bare agent gets no --tools", !bare.args.includes("--tools"));
 check("bare agent always gets --no-skills", bare.args.includes("--no-skills"));
+// tty7 has no automatic axis: `split` falls back to vertical whenever --horizontal is absent,
+// so the choice is ours — along the longer side, because rows are what a TUI runs out of.
+check(
+	"a pane splits sideways only when both halves stay wide enough",
+	extension.splitAxisFor(205) === "--horizontal" &&
+		extension.splitAxisFor(160) === "--horizontal" &&
+		extension.splitAxisFor(120) === "--vertical",
+	`${extension.splitAxisFor(205)} / ${extension.splitAxisFor(160)} / ${extension.splitAxisFor(120)}`,
+);
+check(
+	"an unknown pane size splits height, as it did before it chose at all",
+	extension.splitAxisFor(undefined) === "--vertical",
+);
 check(
 	"replace mode passes the empty append pair",
 	bare.args.includes("--append-system-prompt") && bare.args[bare.args.indexOf("--append-system-prompt") + 1] === "",
@@ -571,6 +600,17 @@ check(
 	callLog.join(" | "),
 );
 
+// The override is what a terminal whose size we cannot trust is told by hand.
+process.env.PI_SUBAGENT_SPLIT = "horizontal";
+const forcedMark = readFileSync(STUB_LOG, "utf-8").length;
+await tools.delegate.execute("verify-forced-split", { agent: "fixture-bare", task: "STUBBORN_TASK" }, undefined, undefined, ctx);
+delete process.env.PI_SUBAGENT_SPLIT;
+const forcedLog = readFileSync(STUB_LOG, "utf-8").slice(forcedMark).trim().split("\n");
+check(
+	"PI_SUBAGENT_SPLIT pins the axis the CLI is given",
+	forcedLog[0] === "split --horizontal --json",
+	forcedLog.slice(0, 2).join(" | "),
+);
 const widgetFrames = frames.filter((frame) => frame.kind === "widget" && frame.content !== undefined);
 const workingFrame = widgetFrames.find((frame) => frame.content.some((line) => line.includes("working")));
 check("widget shows a working row", workingFrame !== undefined);
