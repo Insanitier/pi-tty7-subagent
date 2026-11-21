@@ -213,9 +213,6 @@ your final message is the whole answer it receives, and the only thing it receiv
   and what you did not verify. Not a summary of your process, and not an offer to continue.
 - Never end with a question. If something needs deciding, decide it, state the assumption you
   made, and name the alternative you did not take.
-- You cannot ask the user anything and you cannot delegate further: those tools are absent, so a
-  turn spent reaching for them is lost. If the task is ambiguous in a way that changes the
-  answer, answer what you can and say what the ambiguity was.
 `;
 
 /** The text a child's prompt file holds: its own body, then the frame it cannot infer. */
