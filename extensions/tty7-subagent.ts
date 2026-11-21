@@ -148,7 +148,7 @@ export default function tty7Subagent(pi: ExtensionAPI) {
 		name: "delegate",
 		label: "Subagent",
 		description:
-			"Delegate a task to a subagent running in a visible tty7 pane. Leave wait at its default when the next thing you do depends on the answer; set wait: false when it does not — it keeps working, and a completion notice wakes you when it is over (subagent_status also hands the answer over, when you want it sooner). dry_run shows the resolved launch plan without starting anything.",
+			"Delegate a task to a subagent running in a visible tty7 pane. It starts in the same directory with the same repo and project instructions — but none of this conversation. Leave wait at its default when the next thing you do depends on the answer; set wait: false when it does not — it keeps working, and a completion notice wakes you when it is over (subagent_status also hands the answer over, when you want it sooner). dry_run shows the resolved launch plan without starting anything.",
 		promptSnippet: "Delegate a task to a subagent running in a visible tty7 pane",
 		// The delegation policy: three decisions, and nothing that the description, the
 		// catalogue or the child's own frame already says. How to write the task lives on the
@@ -537,7 +537,7 @@ export default function tty7Subagent(pi: ExtensionAPI) {
 		name: "subagent_status",
 		label: "Subagent status",
 		description:
-			"List this session's subagent delegations and their state. Naming one returns its answer once that delegation is over; wait: true blocks until then, instead of coming back to ask again. The answer arrives here or in the completion notice, never both.",
+			"List this session's subagent delegations and their state. Naming one returns its answer once that delegation is over, and wait: true blocks until then. The answer arrives here or in the completion notice, never both.",
 		promptSnippet: "Check on subagents this session delegated, and wait for one to finish",
 		parameters: Type.Object({
 			sessionName: Type.Optional(
