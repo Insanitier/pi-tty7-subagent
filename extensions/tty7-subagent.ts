@@ -148,7 +148,7 @@ export default function tty7Subagent(pi: ExtensionAPI) {
 		name: "delegate",
 		label: "Subagent",
 		description:
-			"Delegate a task to a subagent running in a visible tty7 pane. Leave wait at its default when the next thing you do depends on the answer; set wait: false when it does not — it keeps working, and a completion notice wakes you when it is over (subagent_status also hands the answer over, when you want it sooner). dry_run shows the resolved launch plan without starting anything.",
+			"Delegate a task to a subagent running in a visible tty7 pane. It returns the child's answer, or — with wait: false — as soon as the pane is up, the answer following later as a completion notice. dry_run shows the resolved launch plan without starting anything.",
 		promptSnippet: "Delegate a task to a subagent running in a visible tty7 pane",
 		// The delegation policy: three decisions, and nothing that the description, the
 		// catalogue or the child's own frame already says. How to write the task lives on the
@@ -177,7 +177,7 @@ export default function tty7Subagent(pi: ExtensionAPI) {
 			wait: Type.Optional(
 				Type.Boolean({
 					description:
-						"Block until the subagent settles and return its answer (default true). Set false to keep working: the completion notice wakes you.",
+						"Block until the subagent settles and return its answer (default true). Set false when what you do next does not depend on it: the child keeps working either way.",
 				}),
 			),
 			dry_run: Type.Optional(

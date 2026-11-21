@@ -1503,9 +1503,13 @@ check(
 );
 check(
 	"delegate names the sanctioned wait instead of leaving the model to improvise one",
-	tools.delegate.description.includes("subagent_status") &&
-		tools.delegate.description.includes("wakes you") &&
-		!/poll/i.test(tools.delegate.description),
+	// The description carries the tool's own contract — what comes back in each mode — and the
+	// policy stays in the rules: both are always in context, so a sentence in one that the other
+	// already says is paid for twice.
+	tools.delegate.description.includes("wait: false") &&
+		tools.delegate.description.includes("completion notice") &&
+		!/poll/i.test(tools.delegate.description) &&
+		!tools.delegate.description.includes("subagent_status"),
 	tools.delegate.description,
 );
 check(
