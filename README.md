@@ -20,13 +20,15 @@ Subagents are declared once in Markdown, and their frontmatter becomes the child
 - `~/.pi/agent/agents/*.md` — user agents
 - `<project>/.pi/agents/*.md` — project agents, which win on a name clash
 
-The agents that resolve are also listed in the parent's system prompt, rebuilt each turn, so the model delegates to real names instead of guessing them. `/subagent-agents` prints the same set for a human, plus the `pi` argv each one launches with.
+The markdown body is the child's system prompt. Whatever it says, the extension appends the frame a fresh child cannot infer on its own — that its last message is the entire answer the parent receives, that it cannot ask anyone anything, and that it cannot delegate further — so an agent file is about its own job and nowhere restates the delivery. A child with no body still gets that frame, alone.
+
+The agents that resolve are also listed in the parent's system prompt, rebuilt each turn, so the model delegates to real names instead of guessing them, and picks by the shape of the work. `/subagent-agents` prints the same set for a human, plus the `pi` argv each one launches with.
 
 ## Tools
 
 | Tool | What it does |
 | --- | --- |
-| `delegate` | Start an agent in a tty7 pane. `wait: true` (the default) blocks until it settles and returns its answer; a child that outlives that wait is handed to the same watcher a background delegation uses, so its answer still arrives — as a completion message — and its pane is still closed. `wait: false` returns as soon as the pane is up and the answer arrives later as a completion message that wakes the parent. `resume` continues a conversation this session already ran, or one named by child session id; pass `false` (or omit it) to start a fresh delegation. `dry_run: true` prints the resolved launch plan without starting anything. |
+| `delegate` | Start an agent in a tty7 pane. `wait: true` (the default) blocks until it settles and returns its answer; a child that outlives that wait is handed to the same watcher a background delegation uses, so its answer still arrives — as a completion message — and its pane is still closed. `wait: false` returns as soon as the pane is up and the answer arrives later as a completion message that wakes the parent — framed as a report to weigh, not as instructions, because a child that read a hostile file writes sentences that look like them. `resume` continues a conversation this session already ran, or one named by child session id; pass `false` (or omit it) to start a fresh delegation. `dry_run: true` prints the resolved launch plan without starting anything. |
 | `steer` | Send another instruction to a running subagent. `interrupt: true` presses Esc first. |
 | `subagent_status` | List this session's delegations — name, state, duration, pane, and what a running child is doing; naming one also returns its answer, once that delegation is over, and `wait` blocks until it is. |
 

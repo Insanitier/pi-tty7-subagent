@@ -525,6 +525,32 @@ check(
 	readFileSync(bare.promptFile, "utf-8") === "fixture body" && (statSync(bare.promptFile).mode & 0o777) === 0o600,
 );
 
+// The one thing a child cannot infer from its agent file: that its last message is the entire
+// answer, and that it has nobody to ask. It belongs at the end, after the specialist's own body.
+const framed = extension.CHILD_PREAMBLE;
+check(
+	"the child is told that its last message is the whole answer",
+	framed.includes("final message is the whole answer") && framed.includes("Never end with a question"),
+	framed.split("\n")[0],
+);
+const framedBody = extension.renderChildPrompt("fixture body");
+check(
+	"its own body comes first and the frame last",
+	framedBody === `fixture body\n\n${framed}`,
+	framedBody.slice(0, 40),
+);
+// A child with no body is the one that needs the frame most, so the plan is a file either way.
+const barePlan = extension.prepareLaunch(
+	extension.discoverAgents(HOME).find((agent) => agent.name === "fixture-bare"),
+	HOME,
+	"verify-prompt-frame",
+);
+rmSync(barePlan.promptFile, { force: true });
+extension.writePromptFile(barePlan.promptFile, extension.CHILD_PREAMBLE);
+check(
+	"a child with no body still gets the frame, alone",
+	readFileSync(barePlan.promptFile, "utf-8") === framed,
+);
 const full = extension.prepareLaunch(
 	extension.discoverAgents(HOME).find((agent) => agent.name === "fixture-full"),
 	HOME,

@@ -19,7 +19,7 @@ import { Type } from "typebox";
 import { answerAlreadyDelivered, awaitQuiescence, clearQueuedNotice, COMPLETION_TYPES, deliverWhenSettled, holdDeliveryFor, queuedNotice, recordDelivery, registerCompletionRenderer, releaseDeliveryHold, teardownDelegation, wentBackToWorkNote } from "./tty7-subagent/delivery.ts";
 import { capCompletion, settledState, waitExpiredNote } from "./tty7-subagent/outcome.ts";
 import { type DelegationEntry, attachEntryApi, beginSession, countTurn, delegations, endSession, formatElapsed, progressLine, rememberRead, replayDelegations, restartTurnCount, settleDelegation, sinceLastRead, waitForDelegation } from "./tty7-subagent/registry.ts";
-import { discoverAgents, formatArgv, prepareLaunch, promptFileFor, writePromptFile } from "./tty7-subagent/agents.ts";
+import { discoverAgents, formatArgv, prepareLaunch, promptFileFor, renderChildPrompt, writePromptFile } from "./tty7-subagent/agents.ts";
 import { type ChildResult, readChildProgress, readChildResult, sessionFileFor, terminalRecordAt } from "./tty7-subagent/child-session.ts";
 import { type SettleOutcome, START_CONFIRM_SECONDS, STEER_CONFIRM_SECONDS, paneAgent, paneForSession, paneIsGone, pressKey, waitForSettle } from "./tty7-subagent/tty7.ts";
 import { blockingResult, dryRunReport, launchChild } from "./tty7-subagent/flow.ts";
@@ -29,7 +29,7 @@ import { sweepExpiredPrompts, sweepOrphanSessions } from "./tty7-subagent/sweeps
 // The pieces the checks drive by name. They live in modules now; the entry keeps the
 // names stable, because a check that reaches into a moved file is a check that has to
 // change whenever the file moves.
-export { discoverAgents, prepareLaunch, writePromptFile } from "./tty7-subagent/agents.ts";
+export { CHILD_PREAMBLE, discoverAgents, prepareLaunch, renderChildPrompt, writePromptFile } from "./tty7-subagent/agents.ts";
 export { SIDE_BY_SIDE_MIN_COLUMNS, splitAxisFor } from "./tty7-subagent/tty7.ts";
 
 // ── Extension entry ────────────────────────────────────────────────────────
@@ -117,7 +117,7 @@ export default function tty7Subagent(pi: ExtensionAPI) {
 			return;
 		}
 		event.systemPromptOptions.sections.subagent_agents = [
-			"delegate can launch these subagents, declared in .pi/agents/*.md:",
+			"Subagents delegate can launch (pick by the shape of the work, not the name):",
 			...agents.map((agent) =>
 				agent.description.length > 0 ? `- ${agent.name}: ${agent.description}` : `- ${agent.name}`,
 			),
@@ -148,20 +148,22 @@ export default function tty7Subagent(pi: ExtensionAPI) {
 		name: "delegate",
 		label: "Subagent",
 		description:
-			"Delegate a task to a subagent running in a visible tty7 pane. wait: true (the default) blocks until it settles and returns its answer; wait: false returns as soon as the pane is up, and the answer arrives later as a completion message that wakes you — or, when you need it before your turn can end, wait for it with subagent_status wait: true. Use dry_run to inspect the resolved launch plan without starting anything.",
+			"Delegate a task to a subagent running in a visible tty7 pane. Leave wait at its default when the next thing you do depends on the answer; set wait: false when it does not — it keeps working, and a completion notice wakes you when it is over (subagent_status also hands the answer over, when you want it sooner). dry_run shows the resolved launch plan without starting anything.",
 		promptSnippet: "Delegate a task to a subagent running in a visible tty7 pane",
-		// The delegation policy, tuned from the subagents fork: when to reach for an
-		// agent, when to search directly instead, and what the answer means. Three rules,
-		// not five: the catalogue already says which agent fits, the mechanism is in the
-		// description, and a rule that only restates either one is not worth its tokens.
+		// The delegation policy: three decisions, and nothing that the description, the
+		// catalogue or the child's own frame already says. How to write the task lives on the
+		// `task` parameter, where it is read at the moment of writing one.
 		promptGuidelines: [
 			"Reach for a subagent when answering would mean reading across several files, or when you have independent work to run in parallel — you keep the conclusion, not the file dumps.",
-			"For a single fact you can already locate, search directly; once a delegation is running, do not investigate the same thing yourself — wait for it (subagent_status with wait: true) rather than reading the same files again.",
-			"Give the subagent a self-contained task, and relay what matters from its answer instead of repeating it; never predict a pending result — if the user asks first, say it is still running.",
+			"For a single fact you can already locate, search directly; once a delegation is running, do not investigate the same thing yourself — wait for it rather than reading the same files again.",
+			"Relay what matters from the answer instead of repeating it, and never predict a pending result: if the user asks first, say it is still running.",
 		],
 		parameters: Type.Object({
 			agent: Type.String({ description: "Agent name, from the subagents listed in your context" }),
-			task: Type.String({ description: "Task to delegate" }),
+			task: Type.String({
+				description:
+					"Write it for a colleague who has not seen this conversation: the paths, symbols and line numbers that matter, what you already tried or ruled out, and the shape of answer you need (for example \"the three call sites, paths + line numbers, under 200 words\"). Do not hand over the judgement — \"based on your findings, fix it\" pushes the thinking back onto it.",
+			}),
 			resume: Type.Optional(
 				// A boolean as well as a string: a caller that does not want to resume has
 				// to be able to say so. Some models fill every optional parameter and have
@@ -169,12 +171,13 @@ export default function tty7Subagent(pi: ExtensionAPI) {
 				// call fails; false is a value they can actually produce.
 				Type.Union([Type.Boolean(), Type.String()], {
 					description:
-						"Pass false (or omit it) to start a fresh delegation. Pass the session name of a delegation this session already ran, or a child session id, to continue that conversation. A transcript is kept while a session file still names it, so it outlives its conversation only as long as another one names it; once it is gone, resume is unavailable and the earlier result is only in the transcript.",
+						"Omit it (or pass false) for a new delegation; pass the session name of an earlier delegation, or its child session id, to continue that conversation.",
 				}),
 			),
 			wait: Type.Optional(
 				Type.Boolean({
-					description: "Block until the subagent settles and return its result (default true)",
+					description:
+						"Block until the subagent settles and return its answer (default true). Set false to keep working: the completion notice wakes you.",
 				}),
 			),
 			dry_run: Type.Optional(
@@ -242,8 +245,8 @@ export default function tty7Subagent(pi: ExtensionAPI) {
 			// child session is still named by anything, so both get trimmed here.
 			sweepOrphanSessions((name) => delegations.has(name));
 			sweepExpiredPrompts();
-			// The child reads its body during startup, so it must exist before the pane opens.
-			if (promptFile !== undefined) writePromptFile(promptFile, agent.systemPrompt);
+			// The child reads its prompt during startup, so it must exist before the pane opens.
+			writePromptFile(promptFile, renderChildPrompt(agent.systemPrompt));
 
 			// 1. Launch the child in its own pane; the task follows as a message.
 			// A launch that fails is a refusal like any other: no tty7 on PATH, no pane to split,
@@ -461,7 +464,7 @@ export default function tty7Subagent(pi: ExtensionAPI) {
 		name: "steer",
 		label: "Steer subagent",
 		description:
-			"Send an additional instruction to a subagent that is already running in its tty7 pane. Set interrupt to stop its current work first; a background delegation keeps its pane open for this.",
+			"Send an additional instruction to a subagent that is already running in its tty7 pane. Steer to change what it is doing — a new constraint, a wrong premise, a missing input; a subagent that is still working is not stuck, and interrupting it to hurry it throws away the work in progress. Set interrupt to stop its current work first.",
 		promptSnippet: "Send an additional instruction to a running subagent",
 		parameters: Type.Object({
 			sessionName: Type.String({ description: "Subagent session name, as returned by delegate" }),
@@ -534,7 +537,7 @@ export default function tty7Subagent(pi: ExtensionAPI) {
 		name: "subagent_status",
 		label: "Subagent status",
 		description:
-			"List this session's subagent delegations and their state. Naming one also returns its answer, once that delegation is over. Set wait to be told when it is over instead of asking again: the answer then reaches you here or on the completion notice, never both.",
+			"List this session's subagent delegations and their state. Naming one returns its answer once that delegation is over; wait: true blocks until then, instead of coming back to ask again. The answer arrives here or in the completion notice, never both.",
 		promptSnippet: "Check on subagents this session delegated, and wait for one to finish",
 		parameters: Type.Object({
 			sessionName: Type.Optional(

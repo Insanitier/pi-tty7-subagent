@@ -190,9 +190,38 @@ export type LaunchPlan = {
 	args: string[];
 	/** Skill entries that resolved to nothing, reported instead of silently dropped. */
 	unresolvedSkills: string[];
-	/** Where the agent body goes, when the agent declares one. The caller writes it. */
-	promptFile?: string;
+	/** Where the child's prompt goes. The caller writes it; building the plan does not. */
+	promptFile: string;
 };
+
+/**
+ * What every child is told about being a child.
+ *
+ * The answer the parent reads is the child's last terminal message and nothing else — not its
+ * tool output, not its reasoning, not the files it touched. An agent that ends with "shall I
+ * proceed?" has therefore answered with that sentence. Pi's own prompt says nothing about any
+ * of this, because it has no idea it is running in a pane, and the agent file is written for a
+ * specialist's job rather than for this delivery. So it is prepended to whatever the agent
+ * declares, and a child with no body gets it alone.
+ */
+export const CHILD_PREAMBLE = `# You are a subagent
+
+Another agent dispatched you through its \`delegate\` tool. It cannot see your tool output:
+your final message is the whole answer it receives, and the only thing it receives.
+
+- End your turn with the answer itself — the conclusion, the paths and line numbers behind it,
+  and what you did not verify. Not a summary of your process, and not an offer to continue.
+- Never end with a question. If something needs deciding, decide it, state the assumption you
+  made, and name the alternative you did not take.
+- You cannot ask the user anything and you cannot delegate further: those tools are absent, so a
+  turn spent reaching for them is lost. If the task is ambiguous in a way that changes the
+  answer, answer what you can and say what the ambiguity was.
+`;
+
+/** The text a child's prompt file holds: its own body, then the frame it cannot infer. */
+export function renderChildPrompt(body: string): string {
+	return body.trim().length > 0 ? `${body.trim()}\n\n${CHILD_PREAMBLE}` : CHILD_PREAMBLE;
+}
 
 /** Where a session's agent body goes. Pure: naming a file does not create it. */
 export function promptFileFor(sessionName: string): string {
@@ -258,20 +287,20 @@ export function prepareLaunch(
 		args.push("--skill", path);
 	}
 
-	let promptFile: string | undefined;
-	if (agent.systemPrompt.length > 0) {
-		promptFile = promptFileFor(sessionName);
-		if (agent.promptMode === "replace") {
-			// The empty append is load-bearing, not a typo: Pi discovers
-			// `<agentDir>/APPEND_SYSTEM.md` only when no append source was passed,
-			// and that file is the *main* agent's identity. An empty value adds no
-			// addendum but still counts as a source, which is the only way to opt
-			// out of the discovery — there is no `--no-append-system-prompt`.
-			// Project context (AGENTS.md) stays on: that one is shared.
-			args.push("--append-system-prompt", "", "--system-prompt", promptFile);
-		} else {
-			args.push("--append-system-prompt", promptFile);
-		}
+	// Always a file, body or not: a child with no body is exactly the one that needs the frame
+	// most, and a mode that passes no prompt source would also let Pi append the main agent's
+	// `APPEND_SYSTEM.md` — the parent's identity, in a child that is not the parent.
+	const promptFile = promptFileFor(sessionName);
+	if (agent.systemPrompt.length > 0 && agent.promptMode === "replace") {
+		// The empty append is load-bearing, not a typo: Pi discovers
+		// `<agentDir>/APPEND_SYSTEM.md` only when no append source was passed,
+		// and that file is the *main* agent's identity. An empty value adds no
+		// addendum but still counts as a source, which is the only way to opt
+		// out of the discovery — there is no `--no-append-system-prompt`.
+		// Project context (AGENTS.md) stays on: that one is shared.
+		args.push("--append-system-prompt", "", "--system-prompt", promptFile);
+	} else {
+		args.push("--append-system-prompt", promptFile);
 	}
 	return { args, unresolvedSkills, promptFile };
 }
